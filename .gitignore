@@ -1,0 +1,5 @@
+./test_compressor
+./tests/random_data_big
+./tests/random_data_big_result
+./tests/random_data_small
+./tests/random_data_small_result
