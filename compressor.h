@@ -89,7 +89,8 @@ static Node nodes[SYM_COUNT + 1];
 Node Huffman_create_tree_from_file(const char* filepath){
   FILE* f = fopen(filepath, "r");
   if(f == NULL){
-    fprintf(stderr, "ERROR %u: Couldn't read file specified!\n%s", errno, strerror(errno));
+    fprintf(stderr, "ERROR %u in Huffman_create_tree_from_file\n"
+	    "Couldn't read file specified!\n%s", errno, strerror(errno));
   }
 
   uint8_t buff[512];
@@ -176,11 +177,13 @@ void Huffman_print_code(Node* root, char* curr_code, size_t curr_position){
 // Code is a null terminated, correct length string 
 char Huffman_get_value_from_str(Node* r, const char* code){
   if(code == NULL){
-    fprintf(stderr, "ERROR: Code given is not valid pointer to string!");
+    fprintf(stderr, "ERROR in Huffman_get_value_from_str\n"
+	    "Code given is not valid pointer to string.");
     exit(1);
   }
   if(r == NULL){
-    fprintf(stderr, "ERROR: Root node given is Null and not traversable!");
+    fprintf(stderr, "ERROR in Huffman_get_value_from_str\n"
+	    "Root node is not traversable: NULL pointer.");
   }
   
   Node root = *r;
@@ -196,7 +199,8 @@ char Huffman_get_value_from_str(Node* r, const char* code){
 // Returns the symbol that corresponds to a given code in the tree
 char Huffman_get_value_from_binary(Node* r, size_t code){
   if(r == NULL){
-    fprintf(stderr, "ERROR: Root node given is Null and not traversable!");
+    fprintf(stderr, "ERROR in Huffman_get_value_from_binary\n"
+	    "Root node given is Null and not traversable!");
   }
   
   size_t offset = 0;
@@ -225,6 +229,26 @@ char Huffman_get_value_from_binary(Node* r, size_t code){
 #endif // HUFFMAN_IMPLEMENTATION
 #ifdef LZ77_HEADER
 
+typedef struct LZ77_config_t LZ77_config_t;
+
+static inline void LZ77_compression_config(size_t window_size, size_t minimum_match_length,
+					   char run_length_code, bool is_big_endian);
+size_t LZ77_compress_buffer(void* restrict src, void* restrict dst, size_t buff_size);
+size_t LZ77_compress_buffer_inplace(void* src, size_t buff_size);
+size_t LZ77_compress_file_into_memory(const char* src_filepath, void* dst);
+size_t LZ77_compress_and_save_file(const char* src_filepath, const char* dst_filepath);  
+
+#endif // LZ77_HEADER
+#ifdef LZ77_IMPLEMENTATION
+
+#include <stdint.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <errno.h>
+#include <string.h>
+#include <stdbool.h>
+#include <assert.h>
+
 #define LZ77_DEFAULT_CONFIG {				\
     .window_size = 4096,				\
       .minimum_match_length = 3,			\
@@ -238,38 +262,10 @@ struct LZ77_config_t{
   char run_length_code;
   bool is_big_endian;
 };
+
 struct LZ77_config_t LZ77_config = LZ77_DEFAULT_CONFIG;
 
 #define MIN_INT(a, b) (((a) > (b)) ? (b) : (a))
-
-static inline void LZ77_compression_config(size_t window_size, size_t minimum_match_length,
-					   char run_length_code, bool is_big_endian);
-size_t LZ77_compress_buffer(void* restrict src, void* restrict dst, size_t buff_size);
-size_t LZ77_compress_buffer_inplace(void* src, size_t buff_size);
-size_t LZ77_compress_file_into_memory(const char* src_filepath, void* dst);
-size_t LZ77_compress_and_save_file(const char* src_filepath, const char* dst_filepath);  
-
-#endif // LZ77_HEADER
-#ifdef LZ77_IMPLEMENTATION
-
-#ifdef DEBUG
-#define print_debug() printf("off: %zu len: %zu\n", match_offset, match_length);	\
-  printf("mstart: %p  mend: %p msrc: %p rem:%zu\n", (void *)move_start,	\
-	 (void*)data_endp, (void*)move_source, move_remaining_data);	\
-  printf("data: %p\n", data);						\
-  printf("f_size: %zu comp: %zu\n\n", buff_size, compressed_size);	\
-
-void print_data(uint8_t* data, uint8_t* endp){
-  size_t length = (size_t)(endp-data);
-  for(size_t i = 0; i < length; ++i){
-    putc(data[i], stdout);
-  }
-  putc('\n', stdout);
-}
-#else
-#define print_debug()
-
-#endif // DEBUG
 
 static inline void LZ77_compression_config(size_t window_size, size_t minimum_match_length,
 					   char run_length_code, bool is_big_endian){
@@ -280,28 +276,44 @@ static inline void LZ77_compression_config(size_t window_size, size_t minimum_ma
   LZ77_config.is_big_endian = is_big_endian;
 }
 
+#define print_init_buff() for(size_t i = 0; i < curr_length; ++i) putc(initial_buff[i], stdout); \
+  putc('\n', stdout);
+
+#define print_comp_buff() for(size_t i = 0; i < curr_length; ++i) putc(compressed_buff[i], stdout); \
+  putc('\n', stdout);								\
+
 enum JumpType{
   ShortJump = 0,
   LongJump = 1,
 };
 
-size_t LZ77_compress_buffer_inplace(void* src, size_t buff_size){
+#define swap_ptr(a, b) void* tmp = a; \
+  a = b;			      \
+  b = tmp;			      \
+
+
+size_t LZ77_compress_buffer_inplace(void* src, size_t src_size){
   if(src == NULL){
-    fprintf(stderr, "ERROR: Couldn't read input buffers, NULL pointer!");
+    fprintf(stderr, "ERROR in LZ77_compress_buffer_inplace\n"
+	    "Input buffer is NULL pointer.");
     exit(1);
   }
 
-  if(buff_size == 0) {
-    fprintf(stderr, "ERROR: Buffer size cannot be zero!");
+  if(src_size == 0) {
+    fprintf(stderr, "ERROR in LZ77_compress_buffer_inplace\n"
+	    "Source buffer size cannot be zero.");
     exit(1);
   } 
   
-  uint8_t* data = (uint8_t*) src;
-  size_t data_endp = (size_t)data + buff_size; 
-  size_t compressed_size = buff_size;
+  uint8_t* initial_buff = (uint8_t*) src;
+  uint8_t* compressed_buff = (uint8_t*)malloc(src_size);
+  compressed_buff[0] = initial_buff[0];
+  
+  size_t curr_length = src_size;
+  bool has_to_swap = false;
   
   size_t window_start = 0;
-  size_t window_end = MIN_INT(buff_size, LZ77_config.window_size);
+  size_t window_end = MIN_INT(src_size, LZ77_config.window_size);
 
   enum JumpType jump_code = ShortJump;
   while(window_start < window_end){
@@ -309,7 +321,9 @@ size_t LZ77_compress_buffer_inplace(void* src, size_t buff_size){
     size_t match_offset = 0;
     size_t match_length = 0;    
 
-    for(size_t cursor = window_start+1; cursor < window_end; ++cursor){
+    for(size_t i = window_start+1; i < window_end; ++i){
+
+      // Determine the type of jump
       if(match_length == 15) {
 	if(match_offset < 255) jump_code = ShortJump;
 	else {      
@@ -317,60 +331,67 @@ size_t LZ77_compress_buffer_inplace(void* src, size_t buff_size){
 	  break;
 	}
       }
-    
-      if(data[window_start + match_length] == data[cursor]){
-	if(match_length == 0) match_offset = (cursor - window_start);
+      
+      if(initial_buff[window_start + match_length] == initial_buff[i]){
+	if(match_length == 0) match_offset = (i - window_start);
 	if(match_length == 255) break;
 	++match_length;
-      } else if (match_length > 0) break;
+      }
+      else if (match_length > 0) break;
+      else compressed_buff[i] = initial_buff[i];
     }
     
     if(match_length > LZ77_config.minimum_match_length){
    
       size_t write_offset = match_offset + window_start;
-      data[write_offset + 0] = jump_code;
+      compressed_buff[write_offset + 0] = jump_code;
       
       if(jump_code == ShortJump){
-	data[write_offset + 1] = (uint8_t)(match_offset & 0xFF);
-	data[write_offset + 2] = (uint8_t)(match_length & 0xFF);
+	compressed_buff[write_offset + 1] = (uint8_t)(match_offset & 0xFF);
+	compressed_buff[write_offset + 2] = (uint8_t)(match_length & 0xFF);
       }
       if(jump_code == LongJump){
-	data[write_offset + 1] = (uint8_t)((match_offset & 0xFFF) >> 8);
-	data[write_offset + 2] = (uint8_t)((((match_offset & 0xFFF) >> 16) << 4) | (match_length & 0xF));
+	compressed_buff[write_offset + 1] = (uint8_t)((match_offset & 0xFFF) >> 8);
+	compressed_buff[write_offset + 2] = (uint8_t)((((match_offset & 0xFFF) >> 16) << 4) | (match_length & 0xF));
       }
 
-      // These encode the position of the memmove. An example of a match would be:
-      // Eurotrain is a train
-      //     ￪          ￪----| match-length
-      // window_start
-      //     |----------| match_offset
-      uint8_t* move_start = (uint8_t*)(data + match_offset + window_start + 3);
-      uint8_t* move_source = (uint8_t*)((size_t) move_start + match_length - 3);
-      size_t move_remaining_data = (size_t)(data_endp - (size_t)move_source);
+      size_t copy_src_start = (size_t)(initial_buff) + window_start + match_offset + match_length;
+      size_t copy_dst_start = (size_t)(compressed_buff) + window_start + match_offset + 3;
+      size_t remaining_length = curr_length - window_start - match_offset - match_length;
 
-      print_debug();
+      /* printf("Match: [%zu, %zu]", match_length, match_offset); */
+      /* printf("rem_length %zu\n", remaining_length); */
+      /* printf("ini %p  dst_st %p\n", initial_buff, copy_dst_start); */
+      // copy rest of data to compress buffer
+      if(remaining_length > 0)
+	memcpy((void*)copy_dst_start, (void*)copy_src_start, remaining_length);      
 
-      if(move_remaining_data > 0)
-	memmove(move_start, move_source, move_remaining_data);
-
-      compressed_size -= (match_length - 3);      
-      data_endp -= (match_length - 3);
-      window_end = compressed_size;
-
-      //print_data(data, data_endp);      
+      // Swap pointers for next compression pass
+      swap_ptr(compressed_buff, initial_buff);
+      has_to_swap = !has_to_swap;
+      
+      curr_length -= (match_length - 3);
+      window_end = curr_length;
     } else{
       ++window_start;
-      window_end = MIN_INT(window_end + 1, compressed_size);
+      window_end = MIN_INT(window_end + 1, curr_length);
     }
   }
   
-  return compressed_size;
+  if(has_to_swap){
+    swap_ptr(compressed_buff, initial_buff);
+    memcpy(initial_buff, compressed_buff, curr_length);
+  }
+  
+  free(compressed_buff);
+  return curr_length;
 }
 
 size_t LZ77_compress_and_save_file(const char* src_filepath, const char* dst_filepath){
   FILE* f = fopen(src_filepath, "r+");
   if(f == NULL){
-    fprintf(stderr, "ERROR %u: Couldn't open source file!\n%s", errno, strerror(errno));
+    fprintf(stderr, "ERROR %u in LZ77_compres_file_and_save\n"
+	    "Couldn't open source file!\n%s", errno, strerror(errno));
     exit(1);
   }
   
@@ -379,19 +400,22 @@ size_t LZ77_compress_and_save_file(const char* src_filepath, const char* dst_fil
   rewind(f);
 
   // @@@ TODO: Implement chunking
-  uint8_t* data = (uint8_t*)malloc((size_t)f_size);
-  fread(data, 1, f_size, f);
+  uint8_t* buff = (uint8_t*)malloc((size_t)f_size);
+  fread(buff, 1, f_size, f);
   
-  size_t compressed_size = LZ77_compress_buffer_inplace(data, f_size);
+  size_t compressed_size = LZ77_compress_buffer_inplace(buff, f_size);
   
   FILE* f_output = fopen(dst_filepath, "w+");
   if(f_output == NULL){
-    fprintf(stderr, "ERROR %u: Couldn't write to destination file!\n%s", errno, strerror(errno));
+    fprintf(stderr, "ERROR %u LZ77_compress_file_and_save\n"
+	    "Couldn't write to destination file!\n%s", errno, strerror(errno));
   }
   
-  fwrite(data, compressed_size, 1, f_output);
-  free(data);
+  fwrite(buff, compressed_size, 1, f_output);
+  fclose(f);
+  fclose(f_output);
   
+  free(buff);
   return compressed_size;
 }
 

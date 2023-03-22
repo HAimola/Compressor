@@ -1,5 +1,8 @@
-./test_compressor
-./tests/random_data_big
-./tests/random_data_big_result
-./tests/random_data_small
-./tests/random_data_small_result
+test_compressor
+tests/random_data_big
+tests/random_data_big_result
+tests/random_data_small
+tests/random_data_small_result
+tests/long_repeated_char
+tests/long_repeated_char_result
+tests/*_error_log
