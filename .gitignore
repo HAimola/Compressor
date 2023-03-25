@@ -6,3 +6,4 @@ tests/random_data_small_result
 tests/long_repeated_char
 tests/long_repeated_char_result
 tests/*_error_log
+profile/

@@ -62,16 +62,7 @@ void sort_node_array(Node* arr, size_t length, bool reversed){
   bubble_sort(arr, length, reversed);
 }
 
-#define debug_freq_print(n)
-//#define debug_freq_print(n) Huffman_print_frequencies(n)
-/* void Huffman_print_frequencies(Node n){ */
-/*   if(n.left == NULL && n.right == NULL) { */
-/*     printf("[FREQ]%c: %zu\n", n.value, n.frequency); */
-/*     return; */
-/*   } */
-/*   Huffman_print_frequencies(*n.left); */
-/*   Huffman_print_frequencies(*n.right); */
-/* } */
+// @@@ TODO: Implement debug options for Huffman coding
 
 // @@@ OPTIMIZATION: Profile performance of stack-based tree generation
 // There are 256 possible symbols for a byte
@@ -247,40 +238,43 @@ size_t LZ77_compress_and_save_file(const char* src_filepath, const char* dst_fil
 #include <errno.h>
 #include <string.h>
 #include <stdbool.h>
-#include <assert.h>
+
+#ifdef DEBUG
+#define LZ77_DEBUG 1
+#else
+#define LZ77_DEBUG 0
+#endif
+
+#define debug_print(fmt, ...) \
+  do{if(LZ77_DEBUG) fprintf(stderr,					\
+			    "(%s)[%s: line %d] "fmt, __FILE_NAME__, __func__, __LINE__, ##__VA_ARGS__);} while(0) \
+
+#define MIN_INT(a, b) (((a) > (b)) ? (b) : (a))
 
 #define LZ77_DEFAULT_CONFIG {				\
     .window_size = 4096,				\
       .minimum_match_length = 3,			\
       .run_length_code = '\000',			\
-      .is_big_endian = 0,				\
       }							\
 
 struct LZ77_config_t{
   size_t window_size;
   size_t minimum_match_length;
   char run_length_code;
-  bool is_big_endian;
 };
 
 struct LZ77_config_t LZ77_config = LZ77_DEFAULT_CONFIG;
 
-#define MIN_INT(a, b) (((a) > (b)) ? (b) : (a))
-
 static inline void LZ77_compression_config(size_t window_size, size_t minimum_match_length,
-					   char run_length_code, bool is_big_endian){
- 
+					   char run_length_code){
   LZ77_config.window_size = window_size;
   LZ77_config.minimum_match_length = minimum_match_length;
   LZ77_config.run_length_code = run_length_code;
-  LZ77_config.is_big_endian = is_big_endian;
+  
+  debug_print("New configs: window_size=%zu, minimum_match_length=%zu, "
+	      "run_length_code=%c", LZ77_config.window_size,
+	      LZ77_config.minimum_match_length, LZ77_config.run_length_code);
 }
-
-#define print_init_buff() for(size_t i = 0; i < curr_length; ++i) putc(initial_buff[i], stdout); \
-  putc('\n', stdout);
-
-#define print_comp_buff() for(size_t i = 0; i < curr_length; ++i) putc(compressed_buff[i], stdout); \
-  putc('\n', stdout);								\
 
 enum JumpType{
   ShortJump = 0,
@@ -292,7 +286,13 @@ enum JumpType{
   b = tmp;			      \
 
 
+/* Compresses a memory buffer using the LZ77 algorithm. The source buffer
+ * 
+ *
+ */
 size_t LZ77_compress_buffer_inplace(void* src, size_t src_size){
+  debug_print("Src buff: %p with size %zu\n", src, src_size);
+  
   if(src == NULL){
     fprintf(stderr, "ERROR in LZ77_compress_buffer_inplace\n"
 	    "Input buffer is NULL pointer.");
@@ -304,18 +304,23 @@ size_t LZ77_compress_buffer_inplace(void* src, size_t src_size){
 	    "Source buffer size cannot be zero.");
     exit(1);
   } 
-  
-  uint8_t* initial_buff = (uint8_t*) src;
+   
+  uint8_t* input_buff = (uint8_t*) src;
   uint8_t* compressed_buff = (uint8_t*)malloc(src_size);
-  compressed_buff[0] = initial_buff[0];
+  compressed_buff[0] = input_buff[0];
   
   size_t curr_length = src_size;
+
+  // We swap the input_buff and compressed_buff pointers while compressig
+  // If we do an odd number of pointer swaps, the input buffer misses
+  // the last compression pass.
   bool has_to_swap = false;
   
   size_t window_start = 0;
   size_t window_end = MIN_INT(src_size, LZ77_config.window_size);
 
   enum JumpType jump_code = ShortJump;
+  
   while(window_start < window_end){
 
     size_t match_offset = 0;
@@ -331,43 +336,54 @@ size_t LZ77_compress_buffer_inplace(void* src, size_t src_size){
 	  break;
 	}
       }
-      
-      if(initial_buff[window_start + match_length] == initial_buff[i]){
+
+      // Search for matches by marching the buffer while the chars matc
+      if(input_buff[window_start + match_length] == input_buff[i]){
+	
 	if(match_length == 0) match_offset = (i - window_start);
 	if(match_length == 255) break;
 	++match_length;
       }
+      // If if this char didn't match, but match_length > 0,
+      // then this is the end of the match
       else if (match_length > 0) break;
-      else compressed_buff[i] = initial_buff[i];
+      else compressed_buff[i] = input_buff[i];
     }
     
     if(match_length > LZ77_config.minimum_match_length){
-   
+
+      // Beginning of the match 
       size_t write_offset = match_offset + window_start;
       compressed_buff[write_offset + 0] = jump_code;
-      
+
+      // Short jumps: 8 bits length
+      //              8 bits offset
       if(jump_code == ShortJump){
 	compressed_buff[write_offset + 1] = (uint8_t)(match_offset & 0xFF);
 	compressed_buff[write_offset + 2] = (uint8_t)(match_length & 0xFF);
       }
+      // Long jumps: 4  bits length
+      //             12 bits offset
       if(jump_code == LongJump){
 	compressed_buff[write_offset + 1] = (uint8_t)((match_offset & 0xFFF) >> 8);
 	compressed_buff[write_offset + 2] = (uint8_t)((((match_offset & 0xFFF) >> 16) << 4) | (match_length & 0xF));
       }
 
-      size_t copy_src_start = (size_t)(initial_buff) + window_start + match_offset + match_length;
-      size_t copy_dst_start = (size_t)(compressed_buff) + window_start + match_offset + 3;
-      size_t remaining_length = curr_length - window_start - match_offset - match_length;
+      // Everything after the matched string
+      size_t copy_src_start = (size_t)(input_buff) + write_offset + match_length;
+      
+      // The position after the beginning of the match plus the 3 byte encoding
+      size_t copy_dst_start = (size_t)(compressed_buff) + write_offset + 3;
 
-      /* printf("Match: [%zu, %zu]", match_length, match_offset); */
-      /* printf("rem_length %zu\n", remaining_length); */
-      /* printf("ini %p  dst_st %p\n", initial_buff, copy_dst_start); */
-      // copy rest of data to compress buffer
+      // Number of bytes to copy to new compressed buffer
+      size_t remaining_length = curr_length - (write_offset + match_length);
+
+      // We compress input_buff into compressed_buff and then copy everything else 
       if(remaining_length > 0)
 	memcpy((void*)copy_dst_start, (void*)copy_src_start, remaining_length);      
 
       // Swap pointers for next compression pass
-      swap_ptr(compressed_buff, initial_buff);
+      swap_ptr(compressed_buff, input_buff);
       has_to_swap = !has_to_swap;
       
       curr_length -= (match_length - 3);
@@ -379,10 +395,12 @@ size_t LZ77_compress_buffer_inplace(void* src, size_t src_size){
   }
   
   if(has_to_swap){
-    swap_ptr(compressed_buff, initial_buff);
-    memcpy(initial_buff, compressed_buff, curr_length);
+    swap_ptr(compressed_buff, input_buff);
+    memcpy(input_buff, compressed_buff, curr_length);
   }
-  
+
+  // Compressed buff is guaranteed to be the one allocated at the start
+  // of the function, so it can be freed normally
   free(compressed_buff);
   return curr_length;
 }
